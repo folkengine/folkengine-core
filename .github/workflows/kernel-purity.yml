@@ -1,0 +1,85 @@
+# The testable definition of "folkengine is a domain kernel":
+#   1. the pure build (no default features) compiles and passes its tests;
+#   2. its dependency tree contains nothing — not a banned crate, not any crate;
+#   3. the kernel lints pass with warnings denied;
+#   4. the WIT contract still resolves and generates bindings.
+
+name: kernel-purity
+
+on:
+  push:
+  pull_request:
+
+env:
+  # Crates that must be ABSENT from the pure dependency tree. Mirrors deny.toml.
+  BANNED: "serde_json|serde_yaml|toml|bincode|tokio|async-std|reqwest|hyper|tonic|axum|rusqlite|sqlx|sled|rand|getrandom|uuid|chrono|time|ahash|hashbrown|indexmap|unicode-normalization"
+
+jobs:
+  purity:
+    name: Pure kernel builds, tests, and has an empty dependency tree
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Pure build and tests
+        run: cargo test --no-default-features
+
+      - name: Assert no banned crate in the pure tree
+        run: |
+          if cargo tree --no-default-features --edges normal --prefix none \
+               | sort -u | grep -E "^($BANNED) " ; then
+            echo "::error::banned crate present in the pure (no-default-features) build"
+            exit 1
+          fi
+          echo "no banned crate in the pure tree"
+
+      - name: Assert the pure tree is exactly one line (the kernel itself)
+        run: |
+          lines=$(cargo tree --no-default-features --edges normal --prefix none | sort -u | wc -l)
+          if [ "$lines" -ne 1 ]; then
+            echo "::error::pure dependency tree has $lines entries; expected 1"
+            cargo tree --no-default-features --edges normal
+            exit 1
+          fi
+          echo "pure dependency tree is the kernel alone"
+
+      - name: Purity grep (Python, no toolchain assumptions)
+        run: python3 scripts/check_purity.py .
+
+  lints:
+    name: Kernel lints (clippy pedantic + cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo clippy --all-targets --features full -- -D warnings
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check bans licenses
+
+  full:
+    name: Opt-in features still build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --features full
+      - run: cargo doc --no-deps --features full
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  contract:
+    name: WIT world resolves and generates bindings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install componentize-py
+      - run: componentize-py -d wit/folkengine.wit -w folkengine bindings /tmp/bindings

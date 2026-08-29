@@ -1,0 +1,61 @@
+# cargo-deny configuration for a domain kernel. Run:
+#   cargo deny check bans
+#
+# The pure (no-default-features) dependency graph of folkengine is empty.
+# `serde` — the trait crate, not a format — is the only optional dependency.
+# Everything below is a fence against the day someone adds a convenience.
+
+[graph]
+all-features = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+deny = [
+    # Concrete serialization formats: a shell picks the format.
+    { name = "serde_json" },
+    { name = "serde_yaml" },
+    { name = "serde_yaml_bw" },
+    { name = "toml" },
+    { name = "ron" },
+    { name = "bincode" },
+    { name = "rmp-serde" },
+    { name = "postcard" },
+    # Async runtimes.
+    { name = "tokio" },
+    { name = "async-std" },
+    { name = "smol" },
+    # Transport / RPC / HTTP.
+    { name = "reqwest" },
+    { name = "hyper" },
+    { name = "tonic" },
+    { name = "axum" },
+    { name = "ureq" },
+    # Storage engines.
+    { name = "rusqlite" },
+    { name = "sqlx" },
+    { name = "sled" },
+    { name = "redb" },
+    { name = "rocksdb" },
+    # Randomness and clocks: tag ids come from state, not entropy.
+    { name = "rand" },
+    { name = "rand_core" },
+    { name = "getrandom" },
+    { name = "uuid" },
+    { name = "chrono" },
+    { name = "time" },
+    # Hashing with non-deterministic iteration order.
+    { name = "ahash" },
+    { name = "hashbrown" },
+    { name = "indexmap" },
+    # Unicode normalization: a deliberate future *contract* change, not a
+    # dependency someone adds on a Tuesday.
+    { name = "unicode-normalization" },
+]
+
+[licenses]
+allow = ["MIT", "Apache-2.0", "Unicode-3.0"]
+
+[advisories]
+yanked = "deny"

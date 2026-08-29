@@ -1,0 +1,247 @@
+package folkengine:folksonomy@0.1.0;
+
+/// The folksonomy *domain kernel*: a pure, delivery-agnostic transition
+/// function over a tag vocabulary and the bindings between tags and items.
+///
+/// The world at the bottom imports nothing, so the compiled component
+/// physically cannot touch the filesystem, network, clock, or environment.
+/// Items are opaque identifiers — the kernel never sees a path, a URL, a
+/// content hash, or a byte of content. Mapping items to real things is a
+/// shell concern.
+///
+/// State goes in and out of every call. The host holds the state; the
+/// component is stateless.
+interface kernel {
+    // ----------------------------------------------------------------------
+    // Identity
+    // ----------------------------------------------------------------------
+
+    /// Stable identity of a tag. Allocated by the kernel from
+    /// `folksonomy.next-tag-id`, so allocation is deterministic and replayable.
+    /// Labels may change; ids never do.
+    type tag-id = u64;
+
+    /// Opaque, caller-supplied identity of a tagged thing. Compared bytewise.
+    type item-id = string;
+
+    /// Opaque, caller-supplied identity of the party performing an action —
+    /// the "folk" in folksonomy. Compared bytewise.
+    type actor-id = string;
+
+    // ----------------------------------------------------------------------
+    // State
+    // ----------------------------------------------------------------------
+
+    /// A private binding is visible only to its tagger; a public one to all.
+    enum visibility { public, private }
+
+    /// A concept in the vocabulary. `label` is the preferred label; `aliases`
+    /// are alternative labels that resolve to this tag. Both are stored in
+    /// normalized form (see `normalize-label`). `parents` makes the vocabulary
+    /// a directed acyclic graph: a tag may have several parents (poly-hierarchy),
+    /// and the kernel rejects any edit that would introduce a cycle.
+    record tag {
+        id: tag-id,
+        label: string,
+        aliases: list<string>,
+        parents: list<tag-id>,
+    }
+
+    /// The folksonomy atom: (tagger, item, tag). The same item may carry the
+    /// same tag from many taggers; each is its own binding.
+    record binding {
+        item: item-id,
+        tag: tag-id,
+        tagger: actor-id,
+        visibility: visibility,
+    }
+
+    /// Full kernel state. `curators` is governance-as-data, owned and set by
+    /// the shell that owns the state: when non-empty, structural vocabulary
+    /// edits (rename, alias, parent, merge, retire) require a curator.
+    /// Defining a tag and tagging are always open — that is the "folk" part.
+    record folksonomy {
+        next-tag-id: tag-id,
+        tags: list<tag>,
+        bindings: list<binding>,
+        curators: list<actor-id>,
+    }
+
+    // ----------------------------------------------------------------------
+    // Actions (inputs to `apply`)
+    // ----------------------------------------------------------------------
+
+    record define-tag { label: string, parents: list<tag-id> }
+    record rename-tag { tag: tag-id, label: string }
+    record alias-change { tag: tag-id, alias: string }
+    record edge { child: tag-id, parent: tag-id }
+    /// Move every binding of `source` onto `into`; `source`'s label and aliases
+    /// become aliases of `into`; `source`'s parents are unioned into `into`'s
+    /// and `source`'s children are re-parented to `into`; `source` is removed.
+    /// Rejected if the resulting graph would contain a cycle. Emits the
+    /// primitive events for every rewired edge, absorbed label and moved
+    /// binding first, and `tags-merged` last.
+    record merge-tags { source: tag-id, into: tag-id }
+    record tag-request { item: item-id, tag: tag-id, visibility: visibility }
+    /// `tagger = none` means the acting actor's own binding.
+    record untag-request { item: item-id, tag: tag-id, tagger: option<actor-id> }
+
+    variant action {
+        /// Open to any actor.
+        define-tag(define-tag),
+        /// Curated when `curators` is non-empty.
+        rename-tag(rename-tag),
+        add-alias(alias-change),
+        remove-alias(alias-change),
+        add-parent(edge),
+        remove-parent(edge),
+        merge-tags(merge-tags),
+        /// Only a tag with no bindings and no children may be retired;
+        /// merge or untag first. Curated.
+        retire-tag(tag-id),
+        /// Open. Idempotent: re-tagging an identical (tagger, item, tag)
+        /// emits nothing; changing only the visibility emits
+        /// `visibility-changed`.
+        tag(tag-request),
+        /// Open for one's own bindings; a curator may also remove anyone's.
+        untag(untag-request),
+    }
+
+    // ----------------------------------------------------------------------
+    // Events (outputs of `apply`) — the product. Shells persist these,
+    // mirror them into indexes, xattrs, sidecars, or other kernels.
+    // ----------------------------------------------------------------------
+
+    record tag-defined { tag: tag-id, label: string, parents: list<tag-id>, by: actor-id }
+    record tag-renamed { tag: tag-id, old-label: string, new-label: string, by: actor-id }
+    record alias-event { tag: tag-id, alias: string, by: actor-id }
+    record edge-event { child: tag-id, parent: tag-id, by: actor-id }
+    record tags-merged { source: tag-id, into: tag-id, moved-bindings: u32, by: actor-id }
+    record tag-retired { tag: tag-id, label: string, by: actor-id }
+    record binding-event { item: item-id, tag: tag-id, tagger: actor-id, visibility: visibility }
+
+    variant event {
+        tag-defined(tag-defined),
+        tag-renamed(tag-renamed),
+        alias-added(alias-event),
+        alias-removed(alias-event),
+        parent-added(edge-event),
+        parent-removed(edge-event),
+        tags-merged(tags-merged),
+        tag-retired(tag-retired),
+        tagged(binding-event),
+        untagged(binding-event),
+        visibility-changed(binding-event),
+    }
+
+    /// Result of a successful `apply`: the new state and, in order, every
+    /// event the action produced.
+    record transition { state: folksonomy, events: list<event> }
+
+    variant folk-error {
+        unknown-tag(tag-id),
+        /// The label is empty after normalization.
+        invalid-label(string),
+        /// Another tag already owns this label or alias; payload is that tag.
+        duplicate-label(tag-id),
+        /// The edit would make the vocabulary cyclic.
+        would-cycle,
+        /// Structural edit, or untag of another actor's binding, by a non-curator.
+        not-authorized,
+        /// Retire refused: the tag still has bindings or children.
+        tag-in-use(tag-id),
+        self-merge,
+        /// Untag of a binding that does not exist.
+        not-bound,
+        /// Remove-parent / remove-alias of an edge or alias that does not exist.
+        not-present,
+    }
+
+    // ----------------------------------------------------------------------
+    // Queries (pure reads; every read is already a per-actor projection)
+    // ----------------------------------------------------------------------
+
+    /// A reference to a tag in a query. `transitive = true` means the tag or
+    /// any of its descendants; `false` means exactly this tag.
+    record tag-ref { tag: tag-id, transitive: bool }
+
+    /// Disjunctive normal form, flattened because WIT types cannot recurse:
+    /// an item matches if it satisfies *every* ref in *any* clause of
+    /// `any-of` and *no* ref in `none-of`. An empty `any-of` matches every
+    /// item that has at least one visible binding. `taggers`, when present,
+    /// restricts the bindings considered to those taggers.
+    record selection {
+        any-of: list<list<tag-ref>>,
+        none-of: list<tag-ref>,
+        taggers: option<list<actor-id>>,
+    }
+
+    record tag-count { tag: tag-id, count: u32 }
+
+    /// What one actor is entitled to see: the whole vocabulary, public
+    /// bindings, and its own private bindings. A distinct type from
+    /// `folksonomy` so a projection cannot be mistaken for state.
+    record folksonomy-view { tags: list<tag>, bindings: list<binding> }
+
+    variant defect {
+        dangling-parent(edge),
+        cycle(list<tag-id>),
+        duplicate-label(string),
+        dangling-binding(binding),
+        /// `next-tag-id` is not greater than every existing id.
+        id-counter-behind,
+    }
+
+    // ----------------------------------------------------------------------
+    // Surface
+    // ----------------------------------------------------------------------
+
+    /// An empty folksonomy with the given curators.
+    empty: func(curators: list<actor-id>) -> folksonomy;
+
+    /// The one label-normalization rule, exported so shells and second
+    /// implementations share it: trim, collapse internal whitespace runs to a
+    /// single space, Unicode lowercase. No Unicode normalization form is
+    /// applied (stated limit).
+    normalize-label: func(label: string) -> string;
+
+    /// Check a state the shell loaded from somewhere against the kernel's
+    /// invariants. An empty list means `apply` and the queries are safe to
+    /// call on it.
+    validate: func(state: folksonomy) -> list<defect>;
+
+    /// The pure transition. Never mutates its input; returns the next state
+    /// and the events, or why the action was rejected.
+    apply: func(state: folksonomy, actor: actor-id, action: action) -> result<transition, folk-error>;
+
+    /// Label or alias → tag, after normalization.
+    resolve: func(state: folksonomy, label: string) -> option<tag-id>;
+
+    /// Transitive closure upward / downward, excluding the tag itself,
+    /// sorted by id.
+    ancestors: func(state: folksonomy, tag: tag-id) -> result<list<tag-id>, folk-error>;
+    descendants: func(state: folksonomy, tag: tag-id) -> result<list<tag-id>, folk-error>;
+
+    /// Items matching `q` as seen by `actor`, deduplicated and sorted
+    /// bytewise by item-id.
+    query: func(state: folksonomy, actor: actor-id, q: selection) -> result<list<item-id>, folk-error>;
+
+    /// For the items `q` matches, how many distinct items carry each tag
+    /// directly (not transitively). Sorted by count descending, then tag id
+    /// ascending. This is the "narrow further" affordance.
+    facets: func(state: folksonomy, actor: actor-id, q: selection) -> result<list<tag-count>, folk-error>;
+
+    /// Bindings on one item visible to `actor`, sorted by (tag, tagger).
+    tags-of: func(state: folksonomy, actor: actor-id, item: item-id) -> list<binding>;
+
+    /// Hidden-information projection. The single place the visibility rule
+    /// lives; every query above applies it.
+    view-for: func(state: folksonomy, actor: actor-id) -> folksonomy-view;
+}
+
+/// The kernel exports its contract and imports nothing. Any host language
+/// can drive the same component; a second, independently written
+/// implementation of this world is the conformance oracle.
+world folkengine {
+    export kernel;
+}

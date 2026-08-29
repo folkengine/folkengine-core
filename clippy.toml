@@ -1,0 +1,36 @@
+# Kernel purity lints. Run with:
+#   cargo clippy --all-targets -- -D warnings
+#
+# These ban the entry points a pure domain kernel must not use. folkengine
+# needs none of them: it takes values and returns values. Banning a *type*
+# also flags its methods; banning a *method* is for finer cases.
+
+disallowed-types = [
+    { path = "std::path::Path",       reason = "items are opaque ids; a shell owns paths" },
+    { path = "std::path::PathBuf",    reason = "items are opaque ids; a shell owns paths" },
+    { path = "std::fs::File",         reason = "no filesystem I/O in a pure kernel" },
+    { path = "std::net::TcpStream",   reason = "no network in a pure kernel" },
+    { path = "std::net::TcpListener", reason = "no network in a pure kernel" },
+    { path = "std::net::UdpSocket",   reason = "no network in a pure kernel" },
+    { path = "std::process::Command", reason = "no process spawning in a pure kernel" },
+    { path = "std::time::Instant",    reason = "the kernel has no clock; time is an argument or nothing" },
+    { path = "std::time::SystemTime", reason = "the kernel has no clock; time is an argument or nothing" },
+    { path = "std::collections::HashMap", reason = "iteration order must be deterministic for replay and conformance; use BTreeMap" },
+    { path = "std::collections::HashSet", reason = "iteration order must be deterministic for replay and conformance; use BTreeSet" },
+]
+
+disallowed-methods = [
+    { path = "std::fs::read",           reason = "kernel must not read the filesystem" },
+    { path = "std::fs::write",          reason = "kernel must not write the filesystem" },
+    { path = "std::fs::read_to_string", reason = "kernel must not read the filesystem" },
+    { path = "std::fs::create_dir_all", reason = "kernel must not touch the filesystem" },
+    { path = "std::fs::remove_file",    reason = "kernel must not touch the filesystem" },
+    { path = "std::env::var",           reason = "kernel must not read the environment" },
+    { path = "std::env::vars",          reason = "kernel must not read the environment" },
+    { path = "std::env::args",          reason = "kernel must not read the environment" },
+    { path = "std::time::SystemTime::now", reason = "tag ids come from a counter in state, never from a clock" },
+    { path = "std::thread::spawn",      reason = "a kernel is a function; parallelism is the shell's" },
+]
+
+# Runtime, transport and format crates are kept out of the dependency graph
+# entirely by deny.toml — stronger than a per-call lint.
