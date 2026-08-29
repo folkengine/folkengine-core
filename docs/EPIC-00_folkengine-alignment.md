@@ -1,6 +1,7 @@
 # EPIC — Align `folkengine` (folksonomy kernel) with the FolkEngine substrate
 
-Status: proposed. Target repo: `folkengine/folkengine` @ `master` (2 commits, 2026-08-28).
+Status: in progress — T-01, T-01b, T-02, T-03, T-05 landed 2026-08-29.
+Target repo: `folkengine/folkengine` @ `master` (3 commits, 2026-08-28).
 Governing documents: `ARCHITECTURE.md`, `SPEC-cas-and-sigsuite.md`,
 `SPEC-rebuild-and-rotation.md`, `SPEC-canonical-encoding.md`, `FOLKENGINE_CHARTER.md`.
 
@@ -59,6 +60,27 @@ substrate being permissive. A GPL LICENSE file on the kernel silently defeats it
 - GitHub's detected license reads `MIT OR Apache-2.0`.
 - `cargo deny check licenses` passes with the declared expression.
 
+**Landed 2026-08-29.** `LICENSE` (GPL-3.0) removed; `LICENSE-MIT` and
+`LICENSE-APACHE` copied verbatim from `pkcore`, which is the house text in both
+orgs (`Copyright (c) 2026 ImperialBower`). README carries the standard dual
+section. `cargo deny check bans licenses` → `bans ok, licenses ok`. GitHub's
+detected license is unverifiable until the change is pushed.
+
+### T-01b — Unlist `unwrap_used` / `expect_used` from `[lints]`
+**Size:** S · **Depends on:** — · **Not in the original draft · Landed 2026-08-29**
+
+`cargo clippy --all-targets -- -D warnings` — the `lints` CI job — was already
+failing on `master`. Cargo's `[lints]` table applies to every target in the
+package, so `expect_used = "warn"` reached the test targets, where `expect` is
+the point of the code. Five test binaries failed to lint.
+
+**Acceptance**
+- Both lints moved out of `Cargo.toml` and into `src/lib.rs` as
+  `#![warn(clippy::unwrap_used, clippy::expect_used)]`, which is the scope they
+  were always meant to have: the kernel answers with a typed error, tests panic.
+- `cargo clippy --all-targets -- -D warnings` and the `--features full` form
+  both pass.
+
 ### T-02 — Raise MSRV to 1.81
 **Size:** S · **Depends on:** — · **Verified defect**
 
@@ -69,6 +91,11 @@ a freedom.
 **Acceptance**
 - `rust-version = "1.81"` in `Cargo.toml`.
 - CI matrix pins 1.81 as the MSRV job and builds clean.
+
+**Landed 2026-08-29.** `rust-version = "1.81"`; a pinned `msrv` job
+(`dtolnay/rust-toolchain@1.81`) builds both the pure and the `full`
+configuration. Nothing in the crate needs a feature newer than 1.81, so the
+raise is a declaration change, not a port.
 
 ### T-03 — ADR: crate name and repo home
 **Size:** S · **Depends on:** — · **Decision required**
@@ -85,6 +112,31 @@ the work lives in `ImperialBower`.
 - If renamed: crate, WIT world, README, and `ARCHITECTURE.md` §13 updated
   together in one commit.
 
+**Landed 2026-08-29** as `docs/adr/0001-crate-name-and-repo-home.md`:
+**the crate keeps the name `folkengine`.**
+
+This task's premise above is rejected. The crate is not a leaf — it is the core
+library of the work, and the core library is the right thing to own the project
+name. A project whose central library shares its name is the normal case. The
+WIT world, the file, the Rust identifier, the org and
+`FOLKENGINE_CHARTER.md` are all therefore unchanged, and there is no source or
+contract churn to review.
+
+The rename to `folksonomy-kernel` was implemented in full during the session —
+crate, WIT world, file, README, tests, CI, all gates green — and then reverted
+when the owner settled the question. It is recorded in the ADR as the considered
+alternative, along with `folkcore-folksonomy` (rejected on a second ground that
+survives regardless: a `folkcore-` prefix asserts a dependency on the substrate
+that the purity gates exist to forbid).
+
+One live consequence, and it belongs to T-04: `ARCHITECTURE.md` uses
+*FolkEngine* for the system and *folkcore* for the substrate. If the core
+library is `folkengine`, either the system name and the core library name
+deliberately coincide — which is what this ADR implies — or the system needs a
+different word, and `folkcore`'s standing as a distinct name is worth
+re-checking at the same time. That is a decision about the *other* repository's
+vocabulary, so the ADR states it and leaves it open.
+
 ### T-04 — Register the kernel in the architecture map
 **Size:** S · **Depends on:** T-03
 
@@ -94,7 +146,18 @@ table), or §13 (document map). Until it does, it is undocumented infrastructure
 **Acceptance**
 - §13 gains a row for the crate and for `FOLKENGINE_CHARTER.md`.
 - §9 gains a proving-ground row: folksonomy kernel, role, status.
-- §11 gains a "domain kernels" row naming the WIT boundary.
+- §11 gains a "domain kernels" row naming the WIT boundary
+  (`folkengine:folksonomy@0.1.0`, world `folkengine`).
+- Carried over from T-03 (ADR-0001): reconcile the vocabulary. `folkengine` is
+  now, by decision, the core library's name; §9/§11/§13 must say what the
+  *system* is called and whether `folkcore` is still a distinct substrate name
+  beside it. Settle this in the same edit as the rows above, so the two
+  repositories never disagree.
+
+**Blocked 2026-08-29.** The local `electronicpanopticon/arch` checkout has
+`ARCHITECTURE.md` and `SPEC-cas-and-sigsuite.md` but not
+`SPEC-rebuild-and-rotation.md` or `SPEC-canonical-encoding.md`, so it is not
+current enough to edit. Same blocker as T-09. Refresh that clone first.
 
 ---
 
@@ -117,6 +180,24 @@ make the substrate's disposable-index invariant false at the domain layer.
   transitions (a rejection emits no events and mutates nothing — extends the
   existing `rejection_never_mutates` test).
 - CI job fails on violation.
+
+**Landed 2026-08-29.** `Folksonomy::fold(&self, &[Event]) -> Folksonomy` in
+`src/fold.rs`, mirrored into the WIT world as `fold: func(state, events) ->
+folksonomy` so a second implementation inherits the law. `tests/fold.rs` pins it
+over 400 seeded traces × 40 actions, in both forms: per step
+`pre.fold(events) == post`, and per trace `genesis.fold(whole trace) == final`,
+which is the definition-of-done equation verbatim. A `Coverage` assertion fails
+the test if the generator stops reaching any of the ten arms both accepted and
+rejected (it needs ~16 seeds; 400 is the margin). Named scenarios cover the
+merge that rewires edges, labels and bindings at once, the rename that promotes
+an alias, id-allocator replay, and opaque-item bytes. Six deliberate mutations
+of `fold` were each caught. Its own CI job, `fold`.
+
+Notes for later tasks: the crate's names are `Event`, `Action::MergeTags` and
+`Action::RenameTag`, not the epic's `FolkEvent` / `Merge` / `Rename` — T-19
+should follow the code. `fold` is infallible by design: it is a replay, and the
+`apply` that produced the events already answered legality. The `Transition`
+type's two halves are now provably one fact.
 
 ### T-06 — Curator membership as an action
 **Size:** M · **Depends on:** T-05

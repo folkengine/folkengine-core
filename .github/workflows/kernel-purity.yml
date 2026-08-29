@@ -2,7 +2,9 @@
 #   1. the pure build (no default features) compiles and passes its tests;
 #   2. its dependency tree contains nothing — not a banned crate, not any crate;
 #   3. the kernel lints pass with warnings denied;
-#   4. the WIT contract still resolves and generates bindings.
+#   4. the WIT contract still resolves and generates bindings;
+#   5. it builds on the declared MSRV, which is the workspace floor;
+#   6. the state half and the event half of every transition agree.
 
 name: kernel-purity
 
@@ -46,6 +48,28 @@ jobs:
 
       - name: Purity grep (Python, no toolchain assumptions)
         run: python3 scripts/check_purity.py .
+
+  fold:
+    name: fold(pre, events) == post for every action arm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # Its own job, not a line in the pure-test output: if the state path and
+      # the event path drift, a shell rebuilding an index from the event stream
+      # gets something other than the state the kernel computed.
+      - run: cargo test --no-default-features --test fold
+
+  msrv:
+    name: Builds on the declared MSRV (1.81, the ARCHITECTURE.md §8 floor)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Pinned, not `stable`: the point of this job is that the floor holds.
+      # Keep in step with `rust-version` in Cargo.toml.
+      - uses: dtolnay/rust-toolchain@1.81
+      - run: cargo build --no-default-features
+      - run: cargo build --features full
 
   lints:
     name: Kernel lints (clippy pedantic + cargo-deny)

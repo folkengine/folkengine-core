@@ -214,6 +214,24 @@ interface kernel {
     /// and the events, or why the action was rejected.
     apply: func(state: folksonomy, actor: actor-id, action: action) -> result<transition, folk-error>;
 
+    /// Replay events onto a state — the other half of the transition contract.
+    /// For any accepted action,
+    ///
+    ///     fold(state, apply(state, actor, action).events)
+    ///       == apply(state, actor, action).state
+    ///
+    /// which is what lets a shell treat the event stream as authoritative and
+    /// the state as a disposable cache. A conforming implementation must
+    /// satisfy this for every action; it is the crate-level form of the
+    /// substrate's rebuild-determinism law.
+    ///
+    /// A replay, not a transition: it asks no questions about authorization or
+    /// legality, because the `apply` that produced the events answered them.
+    /// Folding events no `apply` emitted, or folding onto the wrong prior
+    /// state, can produce a state `validate` rejects — hence no error type.
+    /// `curators` is carried through untouched; no event changes it.
+    fold: func(state: folksonomy, events: list<event>) -> folksonomy;
+
     /// Label or alias → tag, after normalization.
     resolve: func(state: folksonomy, label: string) -> option<tag-id>;
 

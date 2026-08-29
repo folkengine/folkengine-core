@@ -41,11 +41,15 @@
 //! runtime crates out of the graph; the `kernel-purity` CI job asserts both.
 
 #![forbid(unsafe_code)]
+// Kernel code answers with a typed error or a total function; it never
+// panics its way out. Scoped to the library on purpose (see Cargo.toml).
+#![warn(clippy::unwrap_used, clippy::expect_used)]
 
 mod action;
 mod apply;
 mod error;
 mod event;
+mod fold;
 mod ids;
 mod label;
 mod query;

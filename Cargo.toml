@@ -2,7 +2,7 @@
 name = "folkengine"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.81"
 description = "A folksonomy domain kernel: a poly-hierarchical tag vocabulary, (tagger, item, tag) bindings, and per-actor selections — pure, delivery-agnostic, no I/O."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/folkengine/folkengine"
@@ -30,8 +30,9 @@ missing_docs = "warn"
 [lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
-unwrap_used = "warn"
-expect_used = "warn"
+# `unwrap_used` / `expect_used` are library rules, so they live as crate
+# attributes in src/lib.rs: a `[lints]` entry here would also apply to the
+# test targets, where `expect` is the point.
 # Pedantic exceptions that fight readability in a value-heavy kernel.
 module_name_repetitions = "allow"
 must_use_candidate = "allow"
